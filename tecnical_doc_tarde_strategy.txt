@@ -1,0 +1,181 @@
+# Technical Documentation: Automated Solana Trading System
+
+## System Overview
+
+This codebase implements an automated cryptocurrency trading system specifically designed for trading Solana (SOL). The system retrieves historical price data from Amazon S3, analyzes it using multiple technical indicators, generates trading signals, and executes trades by recording them in a Supabase database.
+
+## Architecture
+
+The system consists of two main classes:
+
+1. **S3JSONToDataFrame**: Handles data retrieval from Amazon S3
+2. **TradingStrategy**: Implements technical analysis and trading logic
+
+## Detailed Components
+
+### 1. S3JSONToDataFrame Class
+
+This class is responsible for fetching historical price data stored as JSON files in an Amazon S3 bucket.
+
+#### Key Features:
+
+- **Data Organization**: Retrieves candle data organized hierarchically by year/month/day in S3
+- **Flexible Data Fetching**: Can fetch a specific number of the most recent candles, starting from a specified date
+- **Data Transformation**: Converts JSON data to a pandas DataFrame for analysis
+- **Error Handling**: Includes robust error handling for S3 operations
+
+#### Main Methods:
+
+- `_construct_path(year, month, day)`: Builds the S3 path for a specific date
+- `_list_files(prefix)`: Lists files in a specific S3 path
+- `_get_previous_date(year, month, day)`: Calculates the previous date for iterative fetching
+- `_get_file_content(file_key)`: Retrieves and parses a JSON file from S3
+- `get_last_n_files(n, specific_date)`: Gets the last n files, starting from a specific date
+- `create_dataframe(n, specific_date)`: Creates a properly formatted DataFrame from the retrieved files
+
+### 2. TradingStrategy Class
+
+This class implements the technical analysis and trading logic using several technical indicators:
+
+#### Technical Indicators Used:
+
+- **Keltner Channels**: A volatility-based envelope that uses ATR to set channel width
+- **Bollinger Bands**: A volatility-based envelope that uses standard deviation to set band width
+- **Commodity Channel Index (CCI)**: A momentum oscillator that measures deviation from the average price
+- **Average True Range (ATR)**: A measure of market volatility
+
+#### Signal Generation Logic:
+
+The system generates two types of signals:
+
+1. **Long Signal (Buy)** is triggered when:
+   - Price falls below the lower Keltner Channel
+   - CCI is below -100 (oversold condition)
+   - The difference between Bollinger lower band and Keltner lower channel is less than 0.5%
+
+2. **Short Signal (Sell)** is triggered when:
+   - Price rises above the upper Keltner Channel
+   - CCI is above 100 (overbought condition)
+   - The difference between Bollinger upper band and Keltner upper channel is less than 0.5%
+
+#### Risk Management:
+
+The system calculates:
+- **Take Profit Levels**: Entry price + (TP level × ATR)
+- **Stop Loss Levels**: Entry price - (SL level × ATR)
+- **Trading Fees**: 0.5% of the entry price
+
+#### Main Methods:
+
+- `calculate_keltner_channels(period, atr_multiplier)`: Calculates Keltner Channels
+- `calculate_cci(period)`: Calculates the Commodity Channel Index
+- `calculate_bollinger_bands(period, std_multiplier)`: Calculates Bollinger Bands
+- `calculate_average_true_range()`: Calculates ATR for volatility measurement
+- `generate_signals(period_kernel_chanel, cci_period, period_bolinger_band)`: Analyzes indicators to generate trading signals
+- `calculate_take_profit_stop_loss(entry_price, atr, tp_level, sl_level)`: Calculates risk management levels
+- `execute_trades(budget, tp_level, sl_level)`: Executes trades based on signals
+- `insert_trade_to_supabase(...)`: Records trade details in the Supabase database
+
+## Data Flow
+
+1. Fetch recent candle data from S3 (15-minute intervals)
+2. Process and format the data into a DataFrame
+3. Calculate technical indicators
+4. Generate trading signals based on indicator conditions
+5. Calculate appropriate take profit and stop loss levels
+6. Record trade details in Supabase database
+
+## Configuration Parameters
+
+The system uses the following default parameters:
+
+- **PERIOD_KERNEL_CHANEL**: 20 (period for Keltner Channels)
+- **ATR_MULTIPLIER**: 2 (multiplier for Keltner Channel width)
+- **CCI_PERIOD**: 14 (period for Commodity Channel Index)
+- **PERIOD_BOLINGER_BAND**: 20 (period for Bollinger Bands)
+- **STD_MULTIPLIER**: 2 (standard deviation multiplier for Bollinger Bands)
+- **TP_LEVEL**: 1.5 (take profit level as multiplier of ATR)
+- **SL_LEVEL**: 0.7 (stop loss level as multiplier of ATR)
+- **CANDLES**: 100 (number of candles to retrieve)
+
+## Indicator Warm-Up Period Handling
+
+The code includes specific handling for the warm-up period of indicators:
+
+1. **Minimum Data Requirement**:
+   - The system requires at least `min_required_rows = max(period_kernel_chanel, cci_period, period_bolinger_band) + 1` candles
+   - It fetches 100 candles by default to ensure sufficient historical data
+
+2. **Error Prevention**:
+   - Checks if there's enough data before calculating indicators
+   - Provides warning messages when data is insufficient
+   - Specifically handles CCI calculation with proper NaN and infinity value replacement
+
+3. **Signal Generation Safeguards**:
+   - Verifies all required columns exist and contain valid values
+   - Only generates signals for the most recent candle
+   - Checks for division by zero conditions
+
+## Error Handling
+
+The system implements comprehensive error handling:
+
+- S3 connection and file retrieval errors
+- Insufficient data warnings
+- Missing or NaN values in critical columns
+- Division by zero prevention
+- Database connection and insertion error handling
+
+## Database Integration
+
+Trade data is stored in a Supabase database table called 'trades' with the following fields:
+
+- Budget remaining after trade
+- SOL amount purchased
+- SOL price at entry
+- Signal type flags (short/long)
+- Entry price
+- Take profit and stop loss levels for both short and long positions
+- Trading fee
+- Trade status ('OPEN' or 'CLOSED')
+
+## Environment Requirements
+
+The system requires the following environment variables:
+- `SUPABASE_URL`: The URL of the Supabase instance
+- `SUPABASE_KEY`: The API key for Supabase access
+
+## Limitations and Considerations
+
+1. **Warm-up Period Impact**: 
+   - With a 20-period indicator and only 21 candles, only 1 calculation is fully valid
+   - The system mitigates this by fetching 100 candles by default
+
+2. **Error Handling Approach**:
+   - The system uses defensive programming with extensive error checking
+   - Returns 'ERROR' status when critical issues occur
+
+3. **Signal Convergence Requirement**:
+   - Requires alignment between Bollinger Bands and Keltner Channels (< 0.5% difference)
+   - CCI must confirm the signal direction (< -100 for longs, > 100 for shorts)
+
+4. **Database Dependency**:
+   - Relies on Supabase for trade recording
+   - Future enhancement commented: "change to kafka producer"
+
+## Execution Flow
+
+The `main()` function orchestrates the entire process:
+
+1. Load environment variables
+2. Set trading parameters
+3. Initialize Supabase client
+4. Create S3JSONToDataFrame instance
+5. Retrieve candle data
+6. Initialize TradingStrategy with the data
+7. Calculate technical indicators
+8. Generate trading signals
+9. Execute trades if signals are present
+10. Report trade status
+
+This automated system operates without human intervention, analyzing market conditions and making trading decisions based on technical analysis.

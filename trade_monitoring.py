@@ -1,5 +1,5 @@
-# import schedule
 
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 class TradeMonitor:
     def __init__(self, supabase, get_current_price):
         """
@@ -75,7 +75,7 @@ class TradeMonitor:
     def start_monitoring(self, interval=1):
         """Start background job to check trades every 'interval' minutes."""
         print("🚀 Trade Monitoring Started!")
-        schedule.every(interval).minutes.do(self.check_and_close_trades)
+
 
       
 
